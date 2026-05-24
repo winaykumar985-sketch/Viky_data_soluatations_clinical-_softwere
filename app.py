@@ -1,7 +1,6 @@
 import streamlit as st
 import psycopg2
 import pandas as pd
-from fpdf import FPDF
 import urllib.parse
 from datetime import date, datetime, timedelta
 
@@ -284,21 +283,7 @@ else:
                 if not symptoms or not medicines:
                     st.error("Please fill in Symptoms and Medicines before generating.")
                 else:
-                    pdf = FPDF()
-                    pdf.add_page()
-                    pdf.set_font("Arial", "B", 20)
-                    pdf.cell(0, 10, "MEDISAAS DIGITAL PRESCRIPTION", ln=True, align="C")
-                    pdf.set_font("Arial", "", 12)
-                    pdf.cell(0, 10, f"Clinic: {st.session_state.clinic_id} | Doctor: {st.session_state.username}", ln=True, align="C")
-                    pdf.line(10, 30, 200, 30)
-                    pdf.ln(15)
-                    
-                    pdf.set_font("Arial", "B", 12)
-                    pdf.cell(0, 10, f"Patient Name: {selected_patient_name}", ln=True)
-                    pdf.set_font("Arial", "", 12)
-                    pdf.multi_cell(0, 8, f"Symptoms: {symptoms}\nRx: {medicines}\nAdvice: {advice}")
-                    pdf_bytes = bytes(pdf.output(dest='S'))
-                    
+                    # WhatsApp Generation
                     whatsapp_msg = f"🏥 *{st.session_state.clinic_id} PRESCRIPTION*\n👨‍⚕️ *Dr. {st.session_state.username}*\n👤 *Patient:* {selected_patient_name}\n🩺 *Symptoms:* {symptoms}\n💊 *Medicines:*\n{medicines}\n📝 *Advice:* {advice}"
                     encoded_msg = urllib.parse.quote(whatsapp_msg)
                     clean_phone = ''.join(filter(str.isdigit, selected_patient_phone))
@@ -312,9 +297,4 @@ else:
                     conn.close()
                     
                     st.success("🎉 Treatment completed! Patient removed from queue.")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.download_button("📥 Download PDF", data=pdf_bytes, file_name=f"Rx_{selected_patient_id}.pdf", mime="application/pdf", use_container_width=True)
-                    with col2:
-                        st.link_button("💬 Send via WhatsApp", url=wa_web_url, use_container_width=True)
+                    st.link_button("💬 Send via WhatsApp", url=wa_web_url, use_container_width=True)
