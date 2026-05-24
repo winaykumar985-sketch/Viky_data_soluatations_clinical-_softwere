@@ -39,9 +39,13 @@ def generate_slots(start_str, end_str):
 # --- 2. APP STATE ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+if "username" not in st.session_state:
     st.session_state.username = ""
+if "role" not in st.session_state:
     st.session_state.role = ""
+if "clinic_id" not in st.session_state:
     st.session_state.clinic_id = ""
+if "clinic_name" not in st.session_state:
     st.session_state.clinic_name = ""
 
 # --- 3. SAAS LOGIN SCREEN ---
