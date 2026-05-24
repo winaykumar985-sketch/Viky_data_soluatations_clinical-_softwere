@@ -130,14 +130,36 @@ else:
                     st.success("Clinic completely removed.")
                     st.rerun()
 
+        # UPGRADE: SuperAdmin Safe Date Download Filter
         with tab3: 
+            st.write("📥 Safely download patient records by selecting a date range.")
+            
+            range_sa = st.radio("Select Date Range", ["Last 7 Days (Last Week)", "Last 30 Days (Last Month)", "Custom Range"], key="range_sa")
+            
+            if range_sa == "Last 7 Days (Last Week)":
+                start_date_sa = date.today() - timedelta(days=7)
+                end_date_sa = date.today()
+            elif range_sa == "Last 30 Days (Last Month)":
+                start_date_sa = date.today() - timedelta(days=30)
+                end_date_sa = date.today()
+            else:
+                col1, col2 = st.columns(2)
+                with col1: start_date_sa = st.date_input("Start Date", date.today() - timedelta(days=7), key="sd_sa")
+                with col2: end_date_sa = st.date_input("End Date", date.today(), key="ed_sa")
+
             if clinics:
+                st.markdown("---")
                 for cid, cname in clinics:
                     conn = psycopg2.connect(DB_URL)
-                    df = pd.read_sql_query(f"SELECT * FROM Patients WHERE clinic_id='{cid}'", conn)
+                    query = f"SELECT * FROM Patients WHERE clinic_id='{cid}' AND appointment_date >= '{start_date_sa}' AND appointment_date <= '{end_date_sa}'"
+                    df = pd.read_sql_query(query, conn)
                     conn.close()
-                    csv = df.to_csv(index=False).encode('utf-8')
-                    st.download_button(label=f"📥 Download Data for {cname}", data=csv, file_name=f"{cid}_Data.csv", mime="text/csv", key=f"dl_clinic_{cid}")
+                    
+                    if not df.empty:
+                        csv = df.to_csv(index=False).encode('utf-8')
+                        st.download_button(label=f"📥 Download Data for {cname}", data=csv, file_name=f"{cid}_{start_date_sa}_to_{end_date_sa}.csv", mime="text/csv", key=f"dl_clinic_{cid}")
+                    else:
+                        st.info(f"No records found for {cname} between {start_date_sa} and {end_date_sa}.")
         
         with tab4:
             st.write("Update Admin Credentials safely.")
@@ -200,7 +222,6 @@ else:
                     conn.close()
                     st.rerun()
 
-        # UPGRADE: Dynamic Scheduling UI
         with tab3: 
             st.write("Create specific exact appointment times for your doctors.")
             conn = psycopg2.connect(DB_URL)
@@ -217,9 +238,7 @@ else:
                 st.markdown("---")
                 
                 entered_slots = []
-                # Dynamically generate the number of dropdown boxes
                 for i in range(st.session_state.slot_count):
-                    # Set a default index so they start around 9:00 AM, 9:15 AM, etc.
                     default_idx = 4 + i if (4 + i) < len(time_opts) else 4
                     t_val = st.selectbox(f"Appointment Slot {i+1}", time_opts, index=default_idx, key=f"time_{i}")
                     entered_slots.append(t_val)
@@ -238,19 +257,16 @@ else:
                         
                 with col3:
                     if st.button("💾 Save Doctor Schedule"):
-                        # Remove duplicate times if admin made a mistake
                         final_slots = list(set([s for s in entered_slots if s]))
                         
                         conn = psycopg2.connect(DB_URL)
                         c = conn.cursor()
                         
                         if apply_all:
-                            # Clear all previous schedules and apply to all days
                             c.execute("DELETE FROM Doctor_Time_Slots WHERE clinic_id=%s AND doctor_username=%s", (st.session_state.clinic_id, selected_doc))
                             for s in final_slots:
                                 c.execute("INSERT INTO Doctor_Time_Slots (clinic_id, doctor_username, slot_time, is_recurring) VALUES (%s, %s, %s, %s)", (st.session_state.clinic_id, selected_doc, s, True))
                         else:
-                            # Apply to a specific date only
                             c.execute("DELETE FROM Doctor_Time_Slots WHERE clinic_id=%s AND doctor_username=%s AND specific_date=%s", (st.session_state.clinic_id, selected_doc, sched_date))
                             for s in final_slots:
                                 c.execute("INSERT INTO Doctor_Time_Slots (clinic_id, doctor_username, slot_time, is_recurring, specific_date) VALUES (%s, %s, %s, %s, %s)", (st.session_state.clinic_id, selected_doc, s, False, sched_date))
@@ -259,13 +275,39 @@ else:
                         conn.close()
                         st.success(f"Successfully saved {len(final_slots)} appointment slots for Dr. {selected_doc}!")
 
+        # UPGRADE: Hospital Admin Safe Date Download Filter
         with tab4: 
-            conn = psycopg2.connect(DB_URL)
-            df = pd.read_sql_query(f"SELECT * FROM Patients WHERE clinic_id='{st.session_state.clinic_id}'", conn)
-            conn.close()
-            if not df.empty:
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button(label="📥 Download Hospital Data", data=csv, file_name=f"{st.session_state.clinic_id}_Data.csv", mime="text/csv")
+            st.write("📥 Safely download patient records by selecting a date range.")
+            
+            range_ha = st.radio("Select Date Range", ["Last 7 Days (Last Week)", "Last 30 Days (Last Month)", "Custom Range"], key="range_ha")
+            
+            if range_ha == "Last 7 Days (Last Week)":
+                start_date_ha = date.today() - timedelta(days=7)
+                end_date_ha = date.today()
+            elif range_ha == "Last 30 Days (Last Month)":
+                start_date_ha = date.today() - timedelta(days=30)
+                end_date_ha = date.today()
+            else:
+                col1, col2 = st.columns(2)
+                with col1: start_date_ha = st.date_input("Start Date", date.today() - timedelta(days=7), key="sd_ha")
+                with col2: end_date_ha = st.date_input("End Date", date.today(), key="ed_ha")
+
+            if st.button("Fetch Database"):
+                conn = psycopg2.connect(DB_URL)
+                query = f"SELECT * FROM Patients WHERE clinic_id='{st.session_state.clinic_id}' AND appointment_date >= '{start_date_ha}' AND appointment_date <= '{end_date_ha}'"
+                df = pd.read_sql_query(query, conn)
+                conn.close()
+                
+                if not df.empty:
+                    csv = df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label=f"📥 Download Data ({start_date_ha} to {end_date_ha})", 
+                        data=csv, 
+                        file_name=f"{st.session_state.clinic_id}_{start_date_ha}_to_{end_date_ha}.csv", 
+                        mime="text/csv"
+                    )
+                else:
+                    st.info(f"No patient records found between {start_date_ha} and {end_date_ha}.")
                 
         with tab5:
             st.write("Update Staff Credentials. (Cascades safely so schedules/patients aren't lost).")
@@ -300,7 +342,6 @@ else:
             conn = psycopg2.connect(DB_URL)
             c = conn.cursor()
             
-            # Fetch doctors who have specific slots today or recurring slots
             c.execute("SELECT DISTINCT doctor_username FROM Doctor_Time_Slots WHERE clinic_id=%s AND (is_recurring=TRUE OR specific_date=%s)", (st.session_state.clinic_id, selected_date))
             doctors_avail = [row[0] for row in c.fetchall()]
             
@@ -310,16 +351,13 @@ else:
             else:
                 selected_doc = st.selectbox("2. Select Doctor", doctors_avail)
                 
-                # Pull exact slots built by Admin
                 c.execute("SELECT slot_time FROM Doctor_Time_Slots WHERE clinic_id=%s AND doctor_username=%s AND (is_recurring=TRUE OR specific_date=%s)", (st.session_state.clinic_id, selected_doc, selected_date))
                 all_doc_slots = [row[0] for row in c.fetchall()]
                 
-                # Check booked patients
                 c.execute("SELECT appointment_time FROM Patients WHERE clinic_id=%s AND appointment_date=%s AND doctor_username=%s AND status != 'Cancelled'", (st.session_state.clinic_id, selected_date, selected_doc))
                 booked_slots = [record[0] for record in c.fetchall() if record[0] is not None]
                 conn.close()
                 
-                # Sort the available slots correctly
                 available_slots = sorted([slot for slot in all_doc_slots if slot not in booked_slots], key=lambda t: datetime.strptime(t, "%I:%M %p"))
                 
                 if not available_slots:
