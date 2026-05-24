@@ -15,7 +15,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, role TEXT, clinic_id TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS Patients (patient_id SERIAL PRIMARY KEY, name TEXT, phone TEXT, clinic_id TEXT, appointment_date DATE, appointment_time TEXT, doctor_username TEXT, status TEXT DEFAULT 'Pending')''')
     
-    # NEW TABLE: Custom Time Slots
+    # Custom Time Slots Table
     c.execute('''CREATE TABLE IF NOT EXISTS Doctor_Time_Slots (
         slot_id SERIAL PRIMARY KEY, 
         clinic_id TEXT, 
@@ -130,16 +130,14 @@ else:
                     st.success("Clinic completely removed.")
                     st.rerun()
 
-        # UPGRADE: SuperAdmin Safe Date Download Filter
         with tab3: 
             st.write("📥 Safely download patient records by selecting a date range.")
+            range_sa = st.radio("Select Date Range", ["Last 7 Days", "Last 30 Days", "Custom Range"], key="range_sa")
             
-            range_sa = st.radio("Select Date Range", ["Last 7 Days (Last Week)", "Last 30 Days (Last Month)", "Custom Range"], key="range_sa")
-            
-            if range_sa == "Last 7 Days (Last Week)":
+            if range_sa == "Last 7 Days":
                 start_date_sa = date.today() - timedelta(days=7)
                 end_date_sa = date.today()
-            elif range_sa == "Last 30 Days (Last Month)":
+            elif range_sa == "Last 30 Days":
                 start_date_sa = date.today() - timedelta(days=30)
                 end_date_sa = date.today()
             else:
@@ -184,7 +182,7 @@ else:
     # ==========================================
     elif st.session_state.role == "Admin":
         st.header(f"⚙️ {st.session_state.clinic_name} Management")
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["➕ Add Staff", "👥 Manage Staff", "📅 Schedule Doctors", "📥 Database", "🔒 Security"])
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["➕ Add Staff", "👥 Manage Staff", "📅 Schedule Doctors", "📥 Database", "🔒 Security", "🔔 Reminders"])
         
         with tab1: 
             with st.form("create_staff_form", clear_on_submit=True):
@@ -244,24 +242,20 @@ else:
                     entered_slots.append(t_val)
                 
                 col1, col2, col3 = st.columns(3)
-                
                 with col1:
                     if st.button("➕ Add another time box"):
                         st.session_state.slot_count += 1
                         st.rerun()
-                        
                 with col2:
                     if st.button("🧹 Reset Boxes"):
                         st.session_state.slot_count = 1
                         st.rerun()
-                        
                 with col3:
                     if st.button("💾 Save Doctor Schedule"):
                         final_slots = list(set([s for s in entered_slots if s]))
                         
                         conn = psycopg2.connect(DB_URL)
                         c = conn.cursor()
-                        
                         if apply_all:
                             c.execute("DELETE FROM Doctor_Time_Slots WHERE clinic_id=%s AND doctor_username=%s", (st.session_state.clinic_id, selected_doc))
                             for s in final_slots:
@@ -275,16 +269,14 @@ else:
                         conn.close()
                         st.success(f"Successfully saved {len(final_slots)} appointment slots for Dr. {selected_doc}!")
 
-        # UPGRADE: Hospital Admin Safe Date Download Filter
         with tab4: 
             st.write("📥 Safely download patient records by selecting a date range.")
+            range_ha = st.radio("Select Date Range", ["Last 7 Days", "Last 30 Days", "Custom Range"], key="range_ha")
             
-            range_ha = st.radio("Select Date Range", ["Last 7 Days (Last Week)", "Last 30 Days (Last Month)", "Custom Range"], key="range_ha")
-            
-            if range_ha == "Last 7 Days (Last Week)":
+            if range_ha == "Last 7 Days":
                 start_date_ha = date.today() - timedelta(days=7)
                 end_date_ha = date.today()
-            elif range_ha == "Last 30 Days (Last Month)":
+            elif range_ha == "Last 30 Days":
                 start_date_ha = date.today() - timedelta(days=30)
                 end_date_ha = date.today()
             else:
@@ -328,6 +320,46 @@ else:
                         st.error("Failed. Username might be taken.")
                     finally:
                         conn.close()
+
+        with tab6:
+            st.write("Send quick WhatsApp reminders to your patients.")
+            c1, c2 = st.columns(2)
+            with c1:
+                show_today = st.button("📅 Load Today's Reminders", use_container_width=True)
+            with c2:
+                show_tomorrow = st.button("📆 Load Tomorrow's Reminders", use_container_width=True)
+                
+            target_date = None
+            if show_today:
+                target_date = date.today()
+            elif show_tomorrow:
+                target_date = date.today() + timedelta(days=1)
+                
+            if target_date:
+                st.markdown("---")
+                st.subheader(f"Reminders for {target_date.strftime('%B %d, %Y')}")
+                
+                conn = psycopg2.connect(DB_URL)
+                c = conn.cursor()
+                c.execute("SELECT name, phone, appointment_time, doctor_username FROM Patients WHERE clinic_id=%s AND appointment_date=%s AND status='Pending' ORDER BY appointment_time ASC", (st.session_state.clinic_id, target_date))
+                patients_to_remind = c.fetchall()
+                conn.close()
+                
+                if not patients_to_remind:
+                    st.info("No pending appointments found for this date!")
+                else:
+                    for p_name, p_phone, p_time, p_doc in patients_to_remind:
+                        wa_msg = f"🏥 *{st.session_state.clinic_name} Appointment Reminder*\n\nHello {p_name},\nThis is a friendly reminder for your appointment with *Dr. {p_doc}* on *{target_date.strftime('%B %d')}* at *{p_time}*.\n\nPlease reply to confirm your attendance!"
+                        encoded_wa_msg = urllib.parse.quote(wa_msg)
+                        
+                        clean_phone = ''.join(filter(str.isdigit, p_phone))
+                        if len(clean_phone) == 10: clean_phone = "91" + clean_phone
+                        wa_link = f"https://api.whatsapp.com/send/?phone={clean_phone}&text={encoded_wa_msg}"
+                        
+                        with st.container(border=True):
+                            r1, r2 = st.columns([3, 1])
+                            r1.write(f"👤 **{p_name}** | ⏰ {p_time} | 🩺 Dr. {p_doc} | 📱 {p_phone}")
+                            r2.link_button("📲 Send Reminder", url=wa_link, use_container_width=True)
 
     # ==========================================
     # 📝 RECEPTIONIST VIEW 
