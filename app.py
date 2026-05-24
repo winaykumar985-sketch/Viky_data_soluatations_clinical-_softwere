@@ -15,7 +15,10 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, role TEXT, clinic_id TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS Patients (patient_id SERIAL PRIMARY KEY, name TEXT, phone TEXT, clinic_id TEXT, appointment_date DATE, appointment_time TEXT, doctor_username TEXT, status TEXT DEFAULT 'Pending')''')
     
-    # Custom Time Slots Table
+    # UPGRADE: Add reminder tracking columns!
+    c.execute("ALTER TABLE Patients ADD COLUMN IF NOT EXISTS reminded_tomorrow BOOLEAN DEFAULT FALSE")
+    c.execute("ALTER TABLE Patients ADD COLUMN IF NOT EXISTS reminded_today BOOLEAN DEFAULT FALSE")
+    
     c.execute('''CREATE TABLE IF NOT EXISTS Doctor_Time_Slots (
         slot_id SERIAL PRIMARY KEY, 
         clinic_id TEXT, 
@@ -31,7 +34,7 @@ def init_db():
 
 init_db()
 
-# --- TIME OPTIONS GENERATOR (Every 15 mins) ---
+# --- TIME OPTIONS GENERATOR ---
 time_opts = ["08:00 AM", "08:15 AM", "08:30 AM", "08:45 AM", "09:00 AM", "09:15 AM", "09:30 AM", "09:45 AM", 
              "10:00 AM", "10:15 AM", "10:30 AM", "10:45 AM", "11:00 AM", "11:15 AM", "11:30 AM", "11:45 AM", 
              "12:00 PM", "12:15 PM", "12:30 PM", "12:45 PM", "01:00 PM", "01:15 PM", "01:30 PM", "01:45 PM", 
@@ -322,44 +325,59 @@ else:
                         conn.close()
 
         with tab6:
-            st.write("Send quick WhatsApp reminders to your patients.")
-            c1, c2 = st.columns(2)
-            with c1:
-                show_today = st.button("📅 Load Today's Reminders", use_container_width=True)
-            with c2:
-                show_tomorrow = st.button("📆 Load Tomorrow's Reminders", use_container_width=True)
-                
-            target_date = None
-            if show_today:
+            st.write("Track and send WhatsApp reminders to your patients.")
+            
+            view_option = st.radio("Select Reminder List", ["📅 Today's Appointments", "📆 Tomorrow's Appointments"], horizontal=True, key="admin_reminders")
+            
+            if view_option == "📅 Today's Appointments":
                 target_date = date.today()
-            elif show_tomorrow:
+                is_today_view = True
+            else:
                 target_date = date.today() + timedelta(days=1)
+                is_today_view = False
                 
-            if target_date:
-                st.markdown("---")
-                st.subheader(f"Reminders for {target_date.strftime('%B %d, %Y')}")
-                
-                conn = psycopg2.connect(DB_URL)
-                c = conn.cursor()
-                c.execute("SELECT name, phone, appointment_time, doctor_username FROM Patients WHERE clinic_id=%s AND appointment_date=%s AND status='Pending' ORDER BY appointment_time ASC", (st.session_state.clinic_id, target_date))
-                patients_to_remind = c.fetchall()
-                conn.close()
-                
-                if not patients_to_remind:
-                    st.info("No pending appointments found for this date!")
-                else:
-                    for p_name, p_phone, p_time, p_doc in patients_to_remind:
-                        wa_msg = f"🏥 *{st.session_state.clinic_name} Appointment Reminder*\n\nHello {p_name},\nThis is a friendly reminder for your appointment with *Dr. {p_doc}* on *{target_date.strftime('%B %d')}* at *{p_time}*.\n\nPlease reply to confirm your attendance!"
-                        encoded_wa_msg = urllib.parse.quote(wa_msg)
+            st.markdown("---")
+            st.subheader(f"Reminders for {target_date.strftime('%B %d, %Y')}")
+            
+            conn = psycopg2.connect(DB_URL)
+            c = conn.cursor()
+            # Fetch the reminder trackers!
+            c.execute("SELECT patient_id, name, phone, appointment_time, doctor_username, reminded_today, reminded_tomorrow FROM Patients WHERE clinic_id=%s AND appointment_date=%s AND status='Pending' ORDER BY appointment_time ASC", (st.session_state.clinic_id, target_date))
+            patients_to_remind = c.fetchall()
+            conn.close()
+            
+            if not patients_to_remind:
+                st.info("No pending appointments found for this date!")
+            else:
+                for p_id, p_name, p_phone, p_time, p_doc, r_today, r_tomorrow in patients_to_remind:
+                    wa_msg = f"🏥 *{st.session_state.clinic_name} Appointment Reminder*\n\nHello {p_name},\nThis is a friendly reminder for your appointment with *Dr. {p_doc}* on *{target_date.strftime('%B %d')}* at *{p_time}*.\n\nPlease reply to confirm your attendance!"
+                    encoded_wa_msg = urllib.parse.quote(wa_msg)
+                    
+                    clean_phone = ''.join(filter(str.isdigit, p_phone))
+                    if len(clean_phone) == 10: clean_phone = "91" + clean_phone
+                    wa_link = f"https://api.whatsapp.com/send/?phone={clean_phone}&text={encoded_wa_msg}"
+                    
+                    # Figure out if this specific view has been marked sent
+                    is_sent = r_today if is_today_view else r_tomorrow
+                    
+                    with st.container(border=True):
+                        r1, r2, r3 = st.columns([2.5, 1.2, 1])
+                        r1.write(f"👤 **{p_name}** | ⏰ {p_time} | 📱 {p_phone}")
+                        r2.link_button("💬 Open WhatsApp", url=wa_link, use_container_width=True)
                         
-                        clean_phone = ''.join(filter(str.isdigit, p_phone))
-                        if len(clean_phone) == 10: clean_phone = "91" + clean_phone
-                        wa_link = f"https://api.whatsapp.com/send/?phone={clean_phone}&text={encoded_wa_msg}"
-                        
-                        with st.container(border=True):
-                            r1, r2 = st.columns([3, 1])
-                            r1.write(f"👤 **{p_name}** | ⏰ {p_time} | 🩺 Dr. {p_doc} | 📱 {p_phone}")
-                            r2.link_button("📲 Send Reminder", url=wa_link, use_container_width=True)
+                        if is_sent:
+                            r3.button("✅ Sent", disabled=True, key=f"sent_admin_{p_id}_{is_today_view}", use_container_width=True)
+                        else:
+                            if r3.button("✔️ Mark Sent", key=f"mark_admin_{p_id}_{is_today_view}", use_container_width=True):
+                                conn = psycopg2.connect(DB_URL)
+                                c = conn.cursor()
+                                if is_today_view:
+                                    c.execute("UPDATE Patients SET reminded_today=TRUE WHERE patient_id=%s", (p_id,))
+                                else:
+                                    c.execute("UPDATE Patients SET reminded_tomorrow=TRUE WHERE patient_id=%s", (p_id,))
+                                conn.commit()
+                                conn.close()
+                                st.rerun()
 
     # ==========================================
     # 📝 RECEPTIONIST VIEW 
@@ -367,7 +385,7 @@ else:
     elif st.session_state.role == "Receptionist":
         st.header("📝 Front Desk Dashboard")
         
-        tab1, tab2 = st.tabs(["📅 Book Appointment", "📋 Today's Board"])
+        tab1, tab2, tab3 = st.tabs(["📅 Book Appointment", "📋 Today's Board", "🔔 Reminders"])
         
         with tab1:
             selected_date = st.date_input("1. Select Date", min_value=date.today())
@@ -416,6 +434,60 @@ else:
                 st.info("No appointments scheduled for today.")
             else:
                 st.dataframe(df_today, use_container_width=True, hide_index=True)
+
+        with tab3:
+            st.write("Track and send WhatsApp reminders to your patients.")
+            
+            view_option = st.radio("Select Reminder List", ["📅 Today's Appointments", "📆 Tomorrow's Appointments"], horizontal=True, key="rec_reminders")
+            
+            if view_option == "📅 Today's Appointments":
+                target_date = date.today()
+                is_today_view = True
+            else:
+                target_date = date.today() + timedelta(days=1)
+                is_today_view = False
+                
+            st.markdown("---")
+            st.subheader(f"Reminders for {target_date.strftime('%B %d, %Y')}")
+            
+            conn = psycopg2.connect(DB_URL)
+            c = conn.cursor()
+            c.execute("SELECT patient_id, name, phone, appointment_time, doctor_username, reminded_today, reminded_tomorrow FROM Patients WHERE clinic_id=%s AND appointment_date=%s AND status='Pending' ORDER BY appointment_time ASC", (st.session_state.clinic_id, target_date))
+            patients_to_remind = c.fetchall()
+            conn.close()
+            
+            if not patients_to_remind:
+                st.info("No pending appointments found for this date!")
+            else:
+                for p_id, p_name, p_phone, p_time, p_doc, r_today, r_tomorrow in patients_to_remind:
+                    wa_msg = f"🏥 *{st.session_state.clinic_name} Appointment Reminder*\n\nHello {p_name},\nThis is a friendly reminder for your appointment with *Dr. {p_doc}* on *{target_date.strftime('%B %d')}* at *{p_time}*.\n\nPlease reply to confirm your attendance!"
+                    encoded_wa_msg = urllib.parse.quote(wa_msg)
+                    
+                    clean_phone = ''.join(filter(str.isdigit, p_phone))
+                    if len(clean_phone) == 10: clean_phone = "91" + clean_phone
+                    wa_link = f"https://api.whatsapp.com/send/?phone={clean_phone}&text={encoded_wa_msg}"
+                    
+                    # Figure out if this specific view has been marked sent
+                    is_sent = r_today if is_today_view else r_tomorrow
+                    
+                    with st.container(border=True):
+                        r1, r2, r3 = st.columns([2.5, 1.2, 1])
+                        r1.write(f"👤 **{p_name}** | ⏰ {p_time} | 📱 {p_phone}")
+                        r2.link_button("💬 Open WhatsApp", url=wa_link, use_container_width=True)
+                        
+                        if is_sent:
+                            r3.button("✅ Sent", disabled=True, key=f"sent_rec_{p_id}_{is_today_view}", use_container_width=True)
+                        else:
+                            if r3.button("✔️ Mark Sent", key=f"mark_rec_{p_id}_{is_today_view}", use_container_width=True):
+                                conn = psycopg2.connect(DB_URL)
+                                c = conn.cursor()
+                                if is_today_view:
+                                    c.execute("UPDATE Patients SET reminded_today=TRUE WHERE patient_id=%s", (p_id,))
+                                else:
+                                    c.execute("UPDATE Patients SET reminded_tomorrow=TRUE WHERE patient_id=%s", (p_id,))
+                                conn.commit()
+                                conn.close()
+                                st.rerun()
 
     # ==========================================
     # 🩺 DOCTOR VIEW 
